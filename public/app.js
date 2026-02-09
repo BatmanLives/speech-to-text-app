@@ -14,6 +14,11 @@ let startTime = null;
 let durationInterval = null;
 let showTimestamps = true;
 
+// Tab recording
+let recordingMode = 'none'; // 'microphone', 'tab', or 'none'
+let displayStream = null;
+let tabRecognition = null;
+
 // DOM elements
 const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
@@ -40,6 +45,12 @@ const charCount = document.getElementById('charCount');
 const duration = document.getElementById('duration');
 const connectionStatus = document.getElementById('connectionStatus');
 const savedTranscripts = document.getElementById('savedTranscripts');
+
+// Tab recording DOM elements
+const recordTabBtn = document.getElementById('recordTabBtn');
+const tabRecordingModal = document.getElementById('tabRecordingModal');
+const modalCancelBtn = document.getElementById('modalCancelBtn');
+const modalStartBtn = document.getElementById('modalStartBtn');
 
 // Initialize WebSocket connection
 function connectWebSocket() {
@@ -221,16 +232,27 @@ function initSpeechRecognition() {
 
 // Start listening
 async function startListening() {
+    // Check if tab recording is active
+    if (recordingMode === 'tab') {
+        showError('Please stop tab recording first');
+        return;
+    }
+
     try {
         // Request microphone permission
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         stream.getTracks().forEach(track => track.stop());
-        
+
         hideError();
         isListening = true;
+        recordingMode = 'microphone';
         startTime = Date.now();
         recognition.start();
-        
+
+        // Disable tab recording button
+        recordTabBtn.disabled = true;
+        recordTabBtn.classList.add('opacity-50', 'cursor-not-allowed');
+
         startBtn.classList.add('hidden');
         stopBtn.classList.remove('hidden');
         statusIndicator.classList.remove('hidden');
@@ -238,10 +260,10 @@ async function startListening() {
         transcriptContainer.classList.remove('hidden');
         cursor.classList.remove('hidden');
         stats.classList.remove('hidden');
-        
+
         // Start duration timer
         durationInterval = setInterval(updateDuration, 1000);
-        
+
         showSuccess('Recording started');
     } catch (err) {
         console.error('Microphone error:', err);
@@ -252,22 +274,28 @@ async function startListening() {
 // Stop listening
 function stopListening() {
     isListening = false;
+    recordingMode = 'none';
+
     if (recognition) {
         recognition.stop();
     }
-    
+
+    // Re-enable tab recording button
+    recordTabBtn.disabled = false;
+    recordTabBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+
     startBtn.classList.remove('hidden');
     stopBtn.classList.add('hidden');
     statusIndicator.classList.add('hidden');
     cursor.classList.add('hidden');
     interimTranscript.textContent = '';
-    
+
     // Stop duration timer
     if (durationInterval) {
         clearInterval(durationInterval);
         durationInterval = null;
     }
-    
+
     showSuccess('Recording stopped');
 }
 
@@ -385,7 +413,8 @@ function saveToCloud() {
         language: languageSelect.value,
         date: new Date().toISOString(),
         wordCount: finalTranscriptText.trim().split(/\s+/).filter(w => w.length > 0).length,
-        duration: startTime ? Math.floor((Date.now() - startTime) / 1000) : 0
+        duration: startTime ? Math.floor((Date.now() - startTime) / 1000) : 0,
+        source: recordingMode === 'tab' ? 'tab' : 'microphone'
     };
     
     // Get existing transcripts
@@ -440,6 +469,7 @@ function loadSavedTranscripts() {
                 <span>📝 ${transcript.wordCount} words</span>
                 <span>⏱️ ${Math.floor(transcript.duration / 60)}:${(transcript.duration % 60).toString().padStart(2, '0')}</span>
                 <span>🌍 ${transcript.language}</span>
+                <span>${transcript.source === 'tab' ? '🖥️ Browser Tab' : '🎤 Microphone'}</span>
             </div>
         `;
         
@@ -476,6 +506,203 @@ window.deleteTranscript = function(id) {
         showSuccess('Transcript deleted');
     }
 };
+
+// ========== TAB RECORDING FUNCTIONS ==========
+
+// Show tab recording modal
+function showTabRecordingModal() {
+    tabRecordingModal.classList.remove('hidden');
+}
+
+// Close modal
+function closeModal() {
+    tabRecordingModal.classList.add('hidden');
+}
+
+// Start tab recording
+async function startTabRecording() {
+    try {
+        hideError();
+
+        // Request display media with audio
+        displayStream = await navigator.mediaDevices.getDisplayMedia({
+            video: true, // Required even though we only want audio
+            audio: {
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false
+            }
+        });
+
+        // Check if audio track exists
+        const audioTrack = displayStream.getAudioTracks()[0];
+        if (!audioTrack) {
+            throw new Error('No audio track available. Make sure to check "Share audio" when selecting the tab.');
+        }
+
+        // Create audio context and route audio to speech recognition
+        const audioContext = new AudioContext();
+        const source = audioContext.createMediaStreamSource(displayStream);
+        const dest = audioContext.createMediaStreamDestination();
+        source.connect(dest);
+
+        // Initialize tab recognition with the audio stream
+        tabRecognition = new SpeechRecognition();
+        tabRecognition.continuous = true;
+        tabRecognition.interimResults = true;
+        tabRecognition.lang = languageSelect.value || 'en-US';
+
+        // Set up recognition handlers
+        tabRecognition.onresult = (event) => {
+            let interim = '';
+            let final = '';
+
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const transcript = event.results[i][0].transcript;
+                if (event.results[i].isFinal) {
+                    final += transcript + ' ';
+                } else {
+                    interim += transcript;
+                }
+            }
+
+            if (final) {
+                const timestamp = new Date();
+                const timeString = timestamp.toLocaleTimeString();
+
+                transcriptLinesArray.push({
+                    text: final.trim(),
+                    timestamp: timeString,
+                    fullTimestamp: timestamp
+                });
+
+                finalTranscriptText += final;
+                renderTranscriptLines();
+
+                // Send to server
+                sendToServer({
+                    type: 'transcript',
+                    text: final,
+                    timestamp: timestamp.toISOString(),
+                    isFinal: true,
+                    source: 'tab'
+                });
+
+                updateStats();
+            }
+            interimTranscript.textContent = interim;
+        };
+
+        tabRecognition.onerror = (event) => {
+            console.error('Tab speech recognition error:', event.error);
+            let errorMsg = '';
+
+            if (event.error === 'no-speech') {
+                errorMsg = 'No speech detected in tab audio.';
+            } else if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+                errorMsg = 'Microphone access denied.';
+            } else if (event.error === 'network') {
+                errorMsg = 'Network error.';
+            } else {
+                errorMsg = `Error: ${event.error}`;
+            }
+
+            showError(errorMsg);
+        };
+
+        tabRecognition.onend = () => {
+            if (recordingMode === 'tab') {
+                try {
+                    tabRecognition.start();
+                } catch (e) {
+                    console.error('Failed to restart tab recognition:', e);
+                    stopTabRecording();
+                }
+            }
+        };
+
+        // Detect when tab is closed or sharing stopped
+        displayStream.getVideoTracks()[0].onended = () => {
+            showError('Tab sharing stopped');
+            stopTabRecording();
+        };
+
+        // Start recognition
+        recordingMode = 'tab';
+        startTime = Date.now();
+        tabRecognition.start();
+
+        // Update UI
+        startBtn.disabled = true;
+        startBtn.classList.add('opacity-50', 'cursor-not-allowed');
+        recordTabBtn.classList.add('hidden');
+        stopBtn.classList.remove('hidden');
+        statusIndicator.classList.remove('hidden');
+        emptyState.classList.add('hidden');
+        transcriptContainer.classList.remove('hidden');
+        cursor.classList.remove('hidden');
+        stats.classList.remove('hidden');
+
+        // Change status indicator to orange for tab mode
+        statusIndicator.querySelector('span').textContent = 'Recording from tab...';
+        statusIndicator.classList.add('text-orange-100');
+
+        // Start duration timer
+        durationInterval = setInterval(updateDuration, 1000);
+
+        showSuccess('Recording tab audio');
+
+    } catch (err) {
+        console.error('Tab recording error:', err);
+        if (err.name === 'NotAllowedError') {
+            showError('Tab selection cancelled or permission denied');
+        } else if (err.message.includes('No audio track')) {
+            showError(err.message);
+        } else {
+            showError('Failed to start tab recording: ' + err.message);
+        }
+
+        // Cleanup
+        if (displayStream) {
+            displayStream.getTracks().forEach(track => track.stop());
+            displayStream = null;
+        }
+        recordingMode = 'none';
+    }
+}
+
+// Stop tab recording
+function stopTabRecording() {
+    recordingMode = 'none';
+
+    if (tabRecognition) {
+        tabRecognition.stop();
+        tabRecognition = null;
+    }
+
+    if (displayStream) {
+        displayStream.getTracks().forEach(track => track.stop());
+        displayStream = null;
+    }
+
+    // Update UI
+    startBtn.disabled = false;
+    startBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+    recordTabBtn.classList.remove('hidden');
+    stopBtn.classList.add('hidden');
+    statusIndicator.classList.add('hidden');
+    statusIndicator.classList.remove('text-orange-100');
+    cursor.classList.add('hidden');
+    interimTranscript.textContent = '';
+
+    // Stop duration timer
+    if (durationInterval) {
+        clearInterval(durationInterval);
+        durationInterval = null;
+    }
+
+    showSuccess('Tab recording stopped');
+}
 
 // Update statistics
 function updateStats() {
@@ -524,12 +751,33 @@ function hideSuccess() {
 
 // Event listeners
 startBtn.addEventListener('click', startListening);
-stopBtn.addEventListener('click', stopListening);
+stopBtn.addEventListener('click', () => {
+    if (recordingMode === 'tab') {
+        stopTabRecording();
+    } else {
+        stopListening();
+    }
+});
 clearBtn.addEventListener('click', clearTranscript);
 copyBtn.addEventListener('click', copyToClipboard);
 downloadBtn.addEventListener('click', downloadTranscript);
 saveCloudBtn.addEventListener('click', saveToCloud);
 refreshSavedBtn.addEventListener('click', loadSavedTranscripts);
+
+// Tab recording listeners
+recordTabBtn.addEventListener('click', showTabRecordingModal);
+modalCancelBtn.addEventListener('click', closeModal);
+modalStartBtn.addEventListener('click', () => {
+    closeModal();
+    startTabRecording();
+});
+
+// Close modal on ESC key
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !tabRecordingModal.classList.contains('hidden')) {
+        closeModal();
+    }
+});
 
 // Language selection
 languageSelect.addEventListener('change', () => {
@@ -560,6 +808,14 @@ window.addEventListener('load', () => {
         console.log('Speech recognition initialized');
     }
     loadSavedTranscripts();
+
+    // Check browser compatibility for tab recording
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+        recordTabBtn.disabled = true;
+        recordTabBtn.classList.add('opacity-50', 'cursor-not-allowed');
+        recordTabBtn.title = 'Not supported in this browser. Please use Chrome or Edge.';
+        console.warn('getDisplayMedia not supported - tab recording disabled');
+    }
 });
 
 // Handle page unload
@@ -569,5 +825,11 @@ window.addEventListener('beforeunload', () => {
     }
     if (recognition && isListening) {
         recognition.stop();
+    }
+    if (tabRecognition && recordingMode === 'tab') {
+        tabRecognition.stop();
+    }
+    if (displayStream) {
+        displayStream.getTracks().forEach(track => track.stop());
     }
 });
