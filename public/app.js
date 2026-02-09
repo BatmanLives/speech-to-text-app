@@ -9,8 +9,10 @@ const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecogni
 let recognition = null;
 let isListening = false;
 let finalTranscriptText = '';
+let transcriptLinesArray = []; // Array to store transcript lines with timestamps
 let startTime = null;
 let durationInterval = null;
+let showTimestamps = true;
 
 // DOM elements
 const startBtn = document.getElementById('startBtn');
@@ -18,6 +20,10 @@ const stopBtn = document.getElementById('stopBtn');
 const clearBtn = document.getElementById('clearBtn');
 const copyBtn = document.getElementById('copyBtn');
 const downloadBtn = document.getElementById('downloadBtn');
+const saveCloudBtn = document.getElementById('saveCloudBtn');
+const refreshSavedBtn = document.getElementById('refreshSavedBtn');
+const languageSelect = document.getElementById('languageSelect');
+const timestampToggle = document.getElementById('timestampToggle');
 const statusIndicator = document.getElementById('statusIndicator');
 const errorContainer = document.getElementById('errorContainer');
 const errorMessage = document.getElementById('errorMessage');
@@ -25,7 +31,7 @@ const successContainer = document.getElementById('successContainer');
 const successMessage = document.getElementById('successMessage');
 const emptyState = document.getElementById('emptyState');
 const transcriptContainer = document.getElementById('transcriptContainer');
-const finalTranscript = document.getElementById('finalTranscript');
+const transcriptLines = document.getElementById('transcriptLines');
 const interimTranscript = document.getElementById('interimTranscript');
 const cursor = document.getElementById('cursor');
 const stats = document.getElementById('stats');
@@ -33,6 +39,7 @@ const wordCount = document.getElementById('wordCount');
 const charCount = document.getElementById('charCount');
 const duration = document.getElementById('duration');
 const connectionStatus = document.getElementById('connectionStatus');
+const savedTranscripts = document.getElementById('savedTranscripts');
 
 // Initialize WebSocket connection
 function connectWebSocket() {
@@ -138,7 +145,7 @@ function initSpeechRecognition() {
     recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.lang = 'en-US';
+    recognition.lang = languageSelect.value || 'en-US';
 
     recognition.onresult = (event) => {
         let interim = '';
@@ -154,15 +161,25 @@ function initSpeechRecognition() {
         }
 
         if (final) {
+            const timestamp = new Date();
+            const timeString = timestamp.toLocaleTimeString();
+            
+            // Add to transcript lines with timestamp
+            transcriptLinesArray.push({
+                text: final.trim(),
+                timestamp: timeString,
+                fullTimestamp: timestamp
+            });
+            
             finalTranscriptText += final;
-            finalTranscript.textContent = finalTranscriptText;
+            renderTranscriptLines();
             
             // Send to server
             sendToServer({
                 type: 'transcript',
                 text: final,
-                isFinal: true,
-                timestamp: Date.now()
+                timestamp: timestamp.toISOString(),
+                isFinal: true
             });
             
             updateStats();
@@ -257,7 +274,8 @@ function stopListening() {
 // Clear transcript
 function clearTranscript() {
     finalTranscriptText = '';
-    finalTranscript.textContent = '';
+    transcriptLinesArray = [];
+    transcriptLines.innerHTML = '';
     interimTranscript.textContent = '';
     hideError();
     hideSuccess();
@@ -301,7 +319,18 @@ function copyToClipboard() {
 // Download transcript
 function downloadTranscript() {
     if (finalTranscriptText) {
-        const blob = new Blob([finalTranscriptText], { type: 'text/plain' });
+        let content = '';
+        
+        if (showTimestamps && transcriptLinesArray.length > 0) {
+            // Download with timestamps
+            content = transcriptLinesArray.map(line => 
+                `[${line.timestamp}] ${line.text}`
+            ).join('\n\n');
+        } else {
+            content = finalTranscriptText;
+        }
+        
+        const blob = new Blob([content], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -313,6 +342,140 @@ function downloadTranscript() {
         showSuccess('Transcript downloaded');
     }
 }
+
+// Render transcript lines with timestamps
+function renderTranscriptLines() {
+    transcriptLines.innerHTML = '';
+    
+    transcriptLinesArray.forEach((line, index) => {
+        const lineDiv = document.createElement('div');
+        lineDiv.className = 'mb-3';
+        
+        if (showTimestamps) {
+            const timestampSpan = document.createElement('span');
+            timestampSpan.className = 'text-xs text-blue-600 font-mono mr-2';
+            timestampSpan.textContent = `[${line.timestamp}]`;
+            lineDiv.appendChild(timestampSpan);
+        }
+        
+        const textSpan = document.createElement('span');
+        textSpan.className = 'text-lg text-gray-800';
+        textSpan.textContent = line.text;
+        lineDiv.appendChild(textSpan);
+        
+        transcriptLines.appendChild(lineDiv);
+    });
+    
+    // Auto-scroll to bottom
+    const transcriptBox = document.getElementById('transcriptBox');
+    transcriptBox.scrollTop = transcriptBox.scrollHeight;
+}
+
+// Save transcript to cloud storage (localStorage for now)
+function saveToCloud() {
+    if (!finalTranscriptText) {
+        showError('No transcript to save');
+        return;
+    }
+    
+    const transcriptData = {
+        id: Date.now(),
+        text: finalTranscriptText,
+        lines: transcriptLinesArray,
+        language: languageSelect.value,
+        date: new Date().toISOString(),
+        wordCount: finalTranscriptText.trim().split(/\s+/).filter(w => w.length > 0).length,
+        duration: startTime ? Math.floor((Date.now() - startTime) / 1000) : 0
+    };
+    
+    // Get existing transcripts
+    const saved = JSON.parse(localStorage.getItem('savedTranscripts') || '[]');
+    saved.unshift(transcriptData); // Add to beginning
+    
+    // Keep only last 50 transcripts
+    if (saved.length > 50) {
+        saved.pop();
+    }
+    
+    localStorage.setItem('savedTranscripts', JSON.stringify(saved));
+    showSuccess('Transcript saved to cloud!');
+    loadSavedTranscripts();
+}
+
+// Load saved transcripts from cloud storage
+function loadSavedTranscripts() {
+    const saved = JSON.parse(localStorage.getItem('savedTranscripts') || '[]');
+    
+    if (saved.length === 0) {
+        savedTranscripts.innerHTML = '<p class="text-gray-500 text-sm">No saved transcripts yet. Click "Save to Cloud" to save your first transcript!</p>';
+        return;
+    }
+    
+    savedTranscripts.innerHTML = '';
+    
+    saved.forEach((transcript, index) => {
+        const div = document.createElement('div');
+        div.className = 'border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors';
+        
+        const date = new Date(transcript.date);
+        const dateString = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+        
+        div.innerHTML = `
+            <div class="flex justify-between items-start mb-2">
+                <div>
+                    <p class="font-semibold text-gray-800">Transcript #${saved.length - index}</p>
+                    <p class="text-xs text-gray-500">${dateString}</p>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="loadTranscript(${transcript.id})" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                        Load
+                    </button>
+                    <button onclick="deleteTranscript(${transcript.id})" class="text-red-600 hover:text-red-800 text-sm font-medium">
+                        Delete
+                    </button>
+                </div>
+            </div>
+            <p class="text-sm text-gray-600 mb-2 line-clamp-2">${transcript.text.substring(0, 150)}${transcript.text.length > 150 ? '...' : ''}</p>
+            <div class="flex gap-4 text-xs text-gray-500">
+                <span>📝 ${transcript.wordCount} words</span>
+                <span>⏱️ ${Math.floor(transcript.duration / 60)}:${(transcript.duration % 60).toString().padStart(2, '0')}</span>
+                <span>🌍 ${transcript.language}</span>
+            </div>
+        `;
+        
+        savedTranscripts.appendChild(div);
+    });
+}
+
+// Load a specific transcript
+window.loadTranscript = function(id) {
+    const saved = JSON.parse(localStorage.getItem('savedTranscripts') || '[]');
+    const transcript = saved.find(t => t.id === id);
+    
+    if (transcript) {
+        transcriptLinesArray = transcript.lines || [];
+        finalTranscriptText = transcript.text;
+        renderTranscriptLines();
+        updateStats();
+        
+        emptyState.classList.add('hidden');
+        transcriptContainer.classList.remove('hidden');
+        stats.classList.remove('hidden');
+        
+        showSuccess('Transcript loaded!');
+    }
+};
+
+// Delete a specific transcript
+window.deleteTranscript = function(id) {
+    if (confirm('Are you sure you want to delete this transcript?')) {
+        const saved = JSON.parse(localStorage.getItem('savedTranscripts') || '[]');
+        const filtered = saved.filter(t => t.id !== id);
+        localStorage.setItem('savedTranscripts', JSON.stringify(filtered));
+        loadSavedTranscripts();
+        showSuccess('Transcript deleted');
+    }
+};
 
 // Update statistics
 function updateStats() {
@@ -365,6 +528,30 @@ stopBtn.addEventListener('click', stopListening);
 clearBtn.addEventListener('click', clearTranscript);
 copyBtn.addEventListener('click', copyToClipboard);
 downloadBtn.addEventListener('click', downloadTranscript);
+saveCloudBtn.addEventListener('click', saveToCloud);
+refreshSavedBtn.addEventListener('click', loadSavedTranscripts);
+
+// Language selection
+languageSelect.addEventListener('change', () => {
+    if (isListening) {
+        // Restart recognition with new language
+        stopListening();
+        setTimeout(() => {
+            recognition.lang = languageSelect.value;
+            startListening();
+        }, 500);
+    } else if (recognition) {
+        recognition.lang = languageSelect.value;
+    }
+    showSuccess(`Language changed to ${languageSelect.options[languageSelect.selectedIndex].text}`);
+});
+
+// Timestamp toggle
+timestampToggle.addEventListener('change', (e) => {
+    showTimestamps = e.target.checked;
+    renderTranscriptLines();
+    showSuccess(showTimestamps ? 'Timestamps enabled' : 'Timestamps disabled');
+});
 
 // Initialize on page load
 window.addEventListener('load', () => {
@@ -372,6 +559,7 @@ window.addEventListener('load', () => {
     if (initSpeechRecognition()) {
         console.log('Speech recognition initialized');
     }
+    loadSavedTranscripts();
 });
 
 // Handle page unload
