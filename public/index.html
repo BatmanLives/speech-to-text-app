@@ -101,6 +101,45 @@
                         </svg>
                         Download
                     </button>
+
+                    <button
+                        id="saveCloudBtn"
+                        class="px-6 py-4 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl shadow-lg transition-all flex items-center gap-2"
+                    >
+                        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M5.5 13a3.5 3.5 0 01-.369-6.98 4 4 0 117.753-1.977A4.5 4.5 0 1113.5 13H11V9.413l1.293 1.293a1 1 0 001.414-1.414l-3-3a1 1 0 00-1.414 0l-3 3a1 1 0 001.414 1.414L9 9.414V13H5.5z" />
+                            <path d="M9 13h2v5a1 1 0 11-2 0v-5z" />
+                        </svg>
+                        Save to Cloud
+                    </button>
+                </div>
+
+                <!-- Language & Settings -->
+                <div class="mt-4 flex flex-wrap gap-4 justify-center items-center">
+                    <div class="flex items-center gap-2">
+                        <label for="languageSelect" class="text-white font-semibold text-sm">Language:</label>
+                        <select id="languageSelect" class="px-4 py-2 rounded-lg bg-white text-gray-800 font-medium shadow-lg">
+                            <option value="en-US">English (US)</option>
+                            <option value="en-GB">English (UK)</option>
+                            <option value="es-ES">Spanish (Spain)</option>
+                            <option value="es-MX">Spanish (Mexico)</option>
+                            <option value="fr-FR">French</option>
+                            <option value="de-DE">German</option>
+                            <option value="it-IT">Italian</option>
+                            <option value="pt-BR">Portuguese (Brazil)</option>
+                            <option value="ja-JP">Japanese</option>
+                            <option value="ko-KR">Korean</option>
+                            <option value="zh-CN">Chinese (Mandarin)</option>
+                            <option value="hi-IN">Hindi</option>
+                            <option value="ar-SA">Arabic</option>
+                            <option value="ru-RU">Russian</option>
+                        </select>
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                        <input type="checkbox" id="timestampToggle" checked class="w-5 h-5 rounded">
+                        <label for="timestampToggle" class="text-white font-semibold text-sm">Show Timestamps</label>
+                    </div>
                 </div>
 
                 <!-- Status Indicator -->
@@ -143,8 +182,9 @@
                         </svg>
                         <p class="text-xl font-medium">Start speaking to see your transcript here</p>
                     </div>
-                    <div id="transcriptContainer" class="hidden text-gray-800 text-lg leading-relaxed whitespace-pre-wrap font-sans">
-                        <span id="finalTranscript"></span><span id="interimTranscript" class="text-gray-400 italic"></span><span id="cursor" class="hidden inline-block w-1 h-6 bg-blue-500 cursor-blink ml-1"></span>
+                    <div id="transcriptContainer" class="hidden text-gray-800 leading-relaxed whitespace-pre-wrap font-sans">
+                        <div id="transcriptLines"></div>
+                        <span id="interimTranscript" class="text-gray-400 italic text-lg"></span><span id="cursor" class="hidden inline-block w-1 h-6 bg-blue-500 cursor-blink ml-1"></span>
                     </div>
                 </div>
 
@@ -190,7 +230,28 @@
                     <span class="text-blue-500 font-bold">•</span>
                     <span>Your transcripts are synced with the server in real-time</span>
                 </li>
+                <li class="flex items-start gap-2">
+                    <span class="text-purple-500 font-bold">•</span>
+                    <span><strong>New!</strong> Timestamps show when each sentence was spoken</span>
+                </li>
+                <li class="flex items-start gap-2">
+                    <span class="text-purple-500 font-bold">•</span>
+                    <span><strong>New!</strong> Save transcripts to cloud and access them anytime</span>
+                </li>
             </ul>
+        </div>
+
+        <!-- Saved Transcripts Section -->
+        <div class="mt-8 bg-white rounded-xl shadow-lg p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-bold text-gray-800">💾 Saved Transcripts</h3>
+                <button id="refreshSavedBtn" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg text-sm font-medium">
+                    Refresh
+                </button>
+            </div>
+            <div id="savedTranscripts" class="space-y-2">
+                <p class="text-gray-500 text-sm">No saved transcripts yet. Click "Save to Cloud" to save your first transcript!</p>
+            </div>
         </div>
     </div>
 
